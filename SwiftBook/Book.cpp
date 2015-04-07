@@ -165,8 +165,6 @@ bool Book::WriteTo(const std::string& out_dir) {
     }
   }
 
-  
-
   output.close();
   return true;
 }

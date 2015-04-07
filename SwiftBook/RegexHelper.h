@@ -23,8 +23,9 @@ std::string Replace(const std::string& text, const std::string& pattern,
     std::function<std::string(std::smatch)> replacement) {
   std::stringstream output;
   size_t last_pos = 0;
-  for (std::sregex_iterator it(text.begin(), text.end(), std::regex(pattern)),
-      end; it != end; it++) {
+  std::regex regex(pattern);
+  for (std::sregex_iterator it(text.begin(), text.end(), regex), end;
+       it != end; it++) {
     output.write(text.data() + last_pos, it->position() - last_pos);
     output << replacement(*it);
     last_pos = it->position() + it->length();
