@@ -18,16 +18,11 @@ class CurlWrapper {
 
   std::string Get(const std::string& url);
 
-  const char* LastErrorMessage() { return error_message; }
-  const int LastErrorCode() { return error_code; }
-
  private:
   static size_t WriteCallback(
       void *buffer, size_t size, size_t nmemb, void *userp);
 
   CURL* curl;
-  CURLcode error_code;
-  char error_message[CURL_ERROR_SIZE];
 };
 
 #endif /* defined(__CurlWrapper__) */

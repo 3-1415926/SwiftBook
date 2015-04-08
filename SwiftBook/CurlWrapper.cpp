@@ -7,11 +7,15 @@ using std::stringstream;
 
 string CurlWrapper::Get(const string& url) {
   stringstream ss;
+  char error_message[CURL_ERROR_SIZE];
   curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
   curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, &error_message);
   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, &CurlWrapper::WriteCallback);
   curl_easy_setopt(curl, CURLOPT_WRITEDATA, &ss);
-  error_code = curl_easy_perform(curl);
+  CURLcode error_code = curl_easy_perform(curl);
+  if (error_code != 0) {
+    throw "Error " + std::to_string(error_code) + ": " + error_message;
+  }
   return ss.str();
 }
 

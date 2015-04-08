@@ -10,28 +10,21 @@ using std::cout;
 using std::endl;
 using std::string;
 
-bool Book::ReadFrom(const string& root_url) {
+std::regex abs_regex("^https?://", std::regex::icase);
+
+void Book::ReadFrom(const string& root_url) {
   this->root_url = root_url;
   this->chapters.clear();
-  if (!ReadToc()) { return false; }
-  if (!ReadEachChapter()) { return false; }
-  return true;
+  ReadToc();
+  ReadEachChapter();
 }
 
-bool Book::ReadToc() {
+void Book::ReadToc() {
   cout << "Getting index..." << endl;
   const string index = curl_wrapper.Get(root_url);
-  if (curl_wrapper.LastErrorCode() != 0) {
-    cout << "Error " << curl_wrapper.LastErrorCode()
-         << " when reading index." << endl
-         << "Message: " << curl_wrapper.LastErrorMessage() << endl;
-    return false;
-  }
-
   const string nav_str = Search(index, "<nav(?:.|\n)*?</nav>");
   if (nav_str.size() == 0) {
-    cout << "Could not match the index." << endl;
-    return false;
+    throw "Could not match the index";
   }
 
   std::regex nav_link("<li data-id=\"()([^\"]*)\".*?>(.*)"
@@ -45,23 +38,26 @@ bool Book::ReadToc() {
     cout << chapters.rbegin()->name << endl;
   }
   if (chapters.size() == 0) {
-    cout << "Could not match any TOC link." << endl;
-    return false;
+    throw "Could not match any TOC link";
   }
 
   preamble = Search(index, "^(?:.|\n)*<body[^>]*>");
   if (preamble.size() == 0) {
-    cout << "Could not match preamble." << endl;
-    return false;
+    throw "Could not match preamble";
   }
 
-  resource_root = Search(index, "<meta id=\"resources-uri\" "
-      "name=\"resources-uri\" content=\"([^\"]*)\">");
-
-  return true;
+  preamble = Replace(preamble, "<meta id=\"resources-uri\" "
+      "name=\"resources-uri\" content=\"([^\"]*)\">",
+      [this](std::smatch match) {
+        this->resource_root = match.str(1);
+        return "";
+      });
+  if (resource_root.size() == 0) {
+    throw "Could not match resources-uri";
+  }
 }
 
-bool Book::ReadEachChapter() {
+void Book::ReadEachChapter() {
   cout << "Reading all chapters:" << endl;
   std::regex content_regex("<article class=\"chapter\">((?:.|\n)*?)"
       "<section id=\"next_previous\"");
@@ -73,18 +69,11 @@ bool Book::ReadEachChapter() {
     }
 
     cout << "Reading " << chapter.rel_path << endl;
-    string text = curl_wrapper.Get(root_url + chapter.rel_path);
-    if (curl_wrapper.LastErrorCode() != 0) {
-      cout << "Error " << curl_wrapper.LastErrorCode()
-           << " when reading chapter: " << chapter.rel_path << endl
-           << "Message: " << curl_wrapper.LastErrorMessage() << endl;
-      return false;
-    }
+    const string text = curl_wrapper.Get(root_url + chapter.rel_path);
 
     chapter.text = Search(text, content_regex, 1);
     if (chapter.text.size() == 0) {
-      cout << "Could not extract content from: " << chapter.rel_path << endl;
-      return false;
+      throw "Could not extract content from: " + chapter.rel_path;
     }
 
     const string jump_str = Search(text, jump_regex);
@@ -99,36 +88,28 @@ bool Book::ReadEachChapter() {
       chapter.sub_topics.emplace_back(it->str(1), it->str(2));
     }
     if (chapter.sub_topics.size() == 0) {
-      cout << "Could not find any sub-topics in: " << chapter.rel_path << endl;
-      return false;
+      throw "Could not find any sub-topics in: " + chapter.rel_path;
     }
   }
-  return true;
 }
 
-string Book::SaveResource(const string& url, const string& out_dir) {
+string Book::SaveResource(const string& url) {
+  cout << "Saving: " << url << endl;
+
   string name = Search(url, "[^/]+$");
   if (name.size() == 0) {
-    cout << "Could not match url file name: " << url << endl;
-    return "";
+    throw "Could not match url file name: " + url;
   }
 
-  string abs_url = StartsWith(url, "http://") || StartsWith(url, "https://")
+  const string abs_url = std::regex_match(url, abs_regex)
       ? url : StartsWith(url, resource_root)
           ? root_url + "/" + url
           : root_url + "/" + resource_root + "/" + url;
-  string data = curl_wrapper.Get(url);
-  if (curl_wrapper.LastErrorCode() != 0) {
-    cout << "Error " << curl_wrapper.LastErrorCode()
-         << " when reading resource: " << url << endl
-         << "Message: " << curl_wrapper.LastErrorMessage() << endl;
-    return "";
-  }
-
-  std::ofstream output(out_dir + "/" + name, std::fstream::trunc);
+  const string data = curl_wrapper.Get(url);
+  const string out_path = out_dir + "/" + name;
+  std::ofstream output(out_path, std::fstream::trunc);
   if (!output.good()) {
-    cout << "Resource output stream is not good!" << endl;
-    return "";
+    throw "Resource output stream is not good for: " + out_path;
   }
 
   output.write(data.data(), data.size());
@@ -136,15 +117,40 @@ string Book::SaveResource(const string& url, const string& out_dir) {
   return name;
 }
 
+std::regex url_attr_regex("(src|href)=\"([^\"]*)\"");
+string Book::LocalizeUrls(const string& text) {
+  return Replace(text, url_attr_regex,
+      [this](std::smatch match) {
+        string new_url;
+        if (match.str(1) == "src") {
+          new_url = this->SaveResource(match.str(2));
+        } else /* if (match.str(1) == "href") */ {
+          size_t hash_pos = match.str(2).find_first_of('#');
+          if (std::regex_match(match.str(2), abs_regex)) {
+            new_url = match.str(2);
+          } else if (hash_pos != string::npos) {
+            new_url = match.str(2).substr(hash_pos);
+          }
+          else {
+            throw "Relative url without hash anchor: " + match.str(2);
+          }
+        }
+        return match.str(1) + "=\"" + new_url + "\"";
+      });
+}
 
-bool Book::WriteTo(const std::string& out_dir) {
-  cout << "Writing output..." << endl;
-  std::ofstream output(out_dir + "/swift-doc.html", std::fstream::trunc);
+void Book::WriteTo(const std::string& out_dir) {
+  this->out_dir = out_dir;
+  const string out_path = out_dir + "/swift-doc.html";
+  std::ofstream output(out_path, std::fstream::trunc);
   if (!output.good()) {
-    cout << "Output stream is not good!" << endl;
-    return false;
+    throw "Output stream is not good: " + out_path;
   }
 
+  cout << "Writing preamble..." << endl;
+  output << LocalizeUrls(preamble) << endl;
+
+  cout << "Writing TOC..." << endl;
   std::function<void(const string& tag, const Topic* topic)> output_toc_item =
       [&output](const string& tag, const Topic* topic) {
         output << "<" << tag << "><a href=\"#" << topic->anchor << "\">"
@@ -159,14 +165,17 @@ bool Book::WriteTo(const std::string& out_dir) {
   }
   output << "<hr/>" << endl;
   for (const auto& chapter : chapters) {
+    cout << "Writing chapter: " << chapter.name << endl;
     if (chapter.has_text) {
       output << endl << "<!-- " << chapter.name << " -->" << endl << endl;
-      output << chapter.text << endl;
+      output << LocalizeUrls(chapter.text) << endl;
     }
   }
 
+  cout << "Writing epilogue..." << endl;
+  output << epilogue << endl;
+
   output.close();
-  return true;
 }
 
 

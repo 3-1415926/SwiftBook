@@ -11,17 +11,19 @@
 
 class Book {
  public:
-  bool ReadFrom(const std::string& root_url);
-  bool WriteTo(const std::string& out_dir);
+  void ReadFrom(const std::string& root_url);
+  void WriteTo(const std::string& out_dir);
 
  private:
-  bool ReadToc();
-  bool ReadEachChapter();
+  void ReadToc();
+  void ReadEachChapter();
 
-  std::string SaveResource(const std::string& url, const std::string& out_dir);
+  std::string SaveResource(const std::string& url);
+  std::string LocalizeUrls(const std::string& text);
 
   CurlWrapper curl_wrapper;
   std::string root_url;
+  std::string out_dir;
   std::vector<Chapter> chapters;
   std::string preamble;
   const std::string epilogue { "</body></html>" };

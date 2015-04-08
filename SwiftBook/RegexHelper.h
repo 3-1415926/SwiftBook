@@ -4,6 +4,10 @@
 #include <sstream>
 #include <regex>
 
+bool StartsWith(const std::string& text, const std::string& with) {
+  return std::equal(with.begin(), with.end(), text.begin());
+}
+
 std::string Search(const std::string& text, const std::regex& regex,
     int group = 0) {
   std::smatch match;
@@ -15,15 +19,10 @@ std::string Search(const std::string& text, const std::string& pattern,
   return Search(text, std::regex(pattern), group);
 }
 
-bool StartsWith(const std::string& text, const std::string& with) {
-  return std::equal(with.begin(), with.end(), text.begin());
-}
-
-std::string Replace(const std::string& text, const std::string& pattern,
+std::string Replace(const std::string& text, const std::regex& regex,
     std::function<std::string(std::smatch)> replacement) {
   std::stringstream output;
   size_t last_pos = 0;
-  std::regex regex(pattern);
   for (std::sregex_iterator it(text.begin(), text.end(), regex), end;
        it != end; it++) {
     output.write(text.data() + last_pos, it->position() - last_pos);
@@ -32,6 +31,11 @@ std::string Replace(const std::string& text, const std::string& pattern,
   }
   output.write(text.data() + last_pos, text.size() - last_pos);
   return output.str();
+}
+
+std::string Replace(const std::string& text, const std::string& pattern,
+    std::function<std::string(std::smatch)> replacement) {
+  return Replace(text, std::regex(pattern), replacement);
 }
 
 #endif
