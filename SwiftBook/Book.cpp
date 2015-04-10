@@ -118,7 +118,7 @@ string Book::LocalizeUrls(const string& text) {
           if (!std::regex_search(url, abs_regex) && url.size() > 0) {
             size_t hash_pos = url.find_first_of('#');
             if (hash_pos != string::npos) {
-              if (url.substr(0, hash_pos).find('/')) {
+              if (url.substr(0, hash_pos).find('/') != string::npos) {
                 url = JoinPath({ root_url, url });
               } else {
                 url = url.substr(hash_pos);
