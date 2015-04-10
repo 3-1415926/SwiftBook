@@ -4,10 +4,6 @@
 #include <sstream>
 #include <regex>
 
-bool StartsWith(const std::string& text, const std::string& with) {
-  return std::equal(with.begin(), with.end(), text.begin());
-}
-
 std::string Search(const std::string& text, const std::regex& regex,
     int group = 0) {
   std::smatch match;

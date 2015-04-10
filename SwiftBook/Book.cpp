@@ -11,6 +11,8 @@ using std::endl;
 using std::string;
 
 std::regex abs_regex("^https?://", std::regex::icase);
+std::regex url_attr_regex("(src|href)=\"([^\"]*)\"", std::regex::icase);
+std::regex no_res_regex("\\.(html|zip)$", std::regex::icase);
 
 void Book::ReadFrom(const string& root_url) {
   this->root_url = root_url;
@@ -34,7 +36,9 @@ void Book::ReadToc() {
     bool has_text = !(*it)[3].matched;
     int from = has_text ? 3 : 0;
     chapters.emplace_back(has_text,
-        it->str(1 + from), it->str(2 + from), it->str(3 + from));
+        it->str(1 + from).size() == 0 ? "index.html" : it->str(1 + from),
+        it->str(2 + from),
+        it->str(3 + from));
     cout << chapters.rbegin()->name << endl;
   }
   if (chapters.size() == 0) {
@@ -44,16 +48,6 @@ void Book::ReadToc() {
   preamble = Search(index, "^(?:.|\n)*<body[^>]*>");
   if (preamble.size() == 0) {
     throw "Could not match preamble";
-  }
-
-  preamble = Replace(preamble, "<meta id=\"resources-uri\" "
-      "name=\"resources-uri\" content=\"([^\"]*)\">",
-      [this](std::smatch match) {
-        this->resource_root = match.str(1);
-        return "";
-      });
-  if (resource_root.size() == 0) {
-    throw "Could not match resources-uri";
   }
 }
 
@@ -69,7 +63,8 @@ void Book::ReadEachChapter() {
     }
 
     cout << "Reading " << chapter.rel_path << endl;
-    const string text = curl_wrapper.Get(root_url + chapter.rel_path);
+    const string text = curl_wrapper.Get(
+        JoinPath({ root_url, chapter.rel_path }));
 
     chapter.text = Search(text, content_regex, 1);
     if (chapter.text.size() == 0) {
@@ -96,52 +91,73 @@ void Book::ReadEachChapter() {
 string Book::SaveResource(const string& url) {
   cout << "Saving: " << url << endl;
 
-  string name = Search(url, "[^/]+$");
+  const string name = Search(url, "[^/]+$");
   if (name.size() == 0) {
     throw "Could not match url file name: " + url;
   }
 
-  const string abs_url = std::regex_match(url, abs_regex)
-      ? url : StartsWith(url, resource_root)
-          ? root_url + "/" + url
-          : root_url + "/" + resource_root + "/" + url;
-  const string data = curl_wrapper.Get(url);
-  const string out_path = out_dir + "/" + name;
+  const string abs_url = std::regex_search(url, abs_regex) ? url
+      : JoinPath({ root_url, url });
+  const string out_path = JoinPath({ out_dir, name });
   std::ofstream output(out_path, std::fstream::trunc);
   if (!output.good()) {
     throw "Resource output stream is not good for: " + out_path;
   }
-
-  output.write(data.data(), data.size());
+  curl_wrapper.Save(abs_url, output);
   output.close();
   return name;
 }
 
-std::regex url_attr_regex("(src|href)=\"([^\"]*)\"");
 string Book::LocalizeUrls(const string& text) {
   return Replace(text, url_attr_regex,
       [this](std::smatch match) {
-        string new_url;
+        string url = match.str(2);
         if (match.str(1) == "src") {
-          new_url = this->SaveResource(match.str(2));
+          url = SaveResource(url);
         } else /* if (match.str(1) == "href") */ {
-          size_t hash_pos = match.str(2).find_first_of('#');
-          if (std::regex_match(match.str(2), abs_regex)) {
-            new_url = match.str(2);
-          } else if (hash_pos != string::npos) {
-            new_url = match.str(2).substr(hash_pos);
-          }
-          else {
-            throw "Relative url without hash anchor: " + match.str(2);
+          if (!std::regex_search(url, abs_regex) && url.size() > 0) {
+            size_t hash_pos = url.find_first_of('#');
+            if (hash_pos != string::npos) {
+              if (url.substr(0, hash_pos).find('/')) {
+                url = JoinPath({ root_url, url });
+              } else {
+                url = url.substr(hash_pos);
+              }
+            } else if (std::regex_search(url, no_res_regex)) {
+              url = JoinPath({ root_url, url });
+            } else {
+              url = SaveResource(url);
+            }
           }
         }
-        return match.str(1) + "=\"" + new_url + "\"";
+        return match.str(1) + "=\"" + url + "\"";
       });
+}
+
+string Book::JoinPath(const std::vector<string>& args) {
+  std::stringstream ss;
+  bool is_first = *args.begin()->begin() != '/';
+  for (const auto& it : args) {
+    if (it.size() == 0) {
+      continue;
+    }
+    int prefix_len = *it.begin() == '/';
+    int suffix_len = *it.rbegin() == '/';
+    if (!is_first) {
+      ss << '/';
+    }
+    ss << it.substr(prefix_len, it.size() - prefix_len - suffix_len);
+    is_first = false;
+  }
+  if (*args.rbegin()->rbegin() == '/') {
+    ss << '/';
+  }
+  return ss.str();
 }
 
 void Book::WriteTo(const std::string& out_dir) {
   this->out_dir = out_dir;
-  const string out_path = out_dir + "/swift-doc.html";
+  const string out_path = JoinPath({ out_dir, "swift-doc.html" });
   std::ofstream output(out_path, std::fstream::trunc);
   if (!output.good()) {
     throw "Output stream is not good: " + out_path;
@@ -151,18 +167,27 @@ void Book::WriteTo(const std::string& out_dir) {
   output << LocalizeUrls(preamble) << endl;
 
   cout << "Writing TOC..." << endl;
-  std::function<void(const string& tag, const Topic* topic)> output_toc_item =
-      [&output](const string& tag, const Topic* topic) {
-        output << "<" << tag << "><a href=\"#" << topic->anchor << "\">"
-               << topic->name << "</a></" << tag << ">" << endl;
-      };
-  output << "<h2>Table of Contents</h2>" << endl;
+  output << "<h2 class='chapter-name'>Table of Contents</h2>" << endl;
+  output << "<section class='section'>" << endl;
+  output << "<ul style='font-size: 150%'>" << endl;
   for (const auto& chapter : chapters) {
-    output_toc_item(chapter.has_text ? "h4" : "h3", &chapter);
-    for (const auto& sub_topic : chapter.sub_topics) {
-      output_toc_item("h5", &sub_topic);
+    output << "\t<li class='nav-chapter' style='" << (chapter.has_text ?
+        "text-indent: 10pt" : "font-weight: bold") << "'>" << endl;
+    output << "\t\t<a href=\"#" << chapter.anchor << "\">"
+           << chapter.name << "</a>" << endl;
+    output << "\t</li>" << endl;
+    if (chapter.sub_topics.size() > 0) {
+      output << "\t<ul style='text-indent: 20pt; font-style: italic'>" << endl;
+      for (const auto& sub_topic : chapter.sub_topics) {
+        output << "\t\t<li class='nav-chapter'>"
+               << "<a href=\"#" << sub_topic.anchor
+               << "\">" << sub_topic.name << "</a></li>" << endl;
+      }
+      output << "\t</ul>" << endl;
     }
   }
+  output << "</ul>" << endl;
+  output << "</section>" << endl;
   output << "<hr/>" << endl;
   for (const auto& chapter : chapters) {
     cout << "Writing chapter: " << chapter.name << endl;

@@ -20,6 +20,7 @@ class Book {
 
   std::string SaveResource(const std::string& url);
   std::string LocalizeUrls(const std::string& text);
+  std::string JoinPath(const std::vector<std::string>& args);
 
   CurlWrapper curl_wrapper;
   std::string root_url;
@@ -27,7 +28,6 @@ class Book {
   std::vector<Chapter> chapters;
   std::string preamble;
   const std::string epilogue { "</body></html>" };
-  std::string resource_root;
 };
 
 #endif /* defined(__SwiftBook__Book__) */

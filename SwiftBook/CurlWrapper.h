@@ -3,6 +3,7 @@
 
 #include <curl.h>
 #include <easy.h>
+#include <ostream>
 #include <string>
 #include <vector>
 
@@ -17,8 +18,10 @@ class CurlWrapper {
   }
 
   std::string Get(const std::string& url);
+  void Save(const std::string& url, std::ostream& stream);
 
  private:
+  template <typename Stream>
   static size_t WriteCallback(
       void *buffer, size_t size, size_t nmemb, void *userp);
 
