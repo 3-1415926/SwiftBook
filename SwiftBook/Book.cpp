@@ -188,11 +188,11 @@ void Book::WriteTo(const std::string& out_dir) {
   }
   output << "</ul>" << endl;
   output << "</section>" << endl;
-  output << "<hr/>" << endl;
   for (const auto& chapter : chapters) {
     cout << "Writing chapter: " << chapter.name << endl;
     if (chapter.has_text) {
       output << endl << "<!-- " << chapter.name << " -->" << endl << endl;
+      output << "<hr/>" << endl;
       output << LocalizeUrls(chapter.text) << endl;
     }
   }
